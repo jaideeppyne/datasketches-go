@@ -39,6 +39,7 @@ jobs:
           go version | tee proof/runtime.txt
           go build ./...
           make download-snapshots
+          make generate-go-snapshots
           go test -race -count=1 ./... 2>&1 | tee proof/tests.log
           go vet ./... 2>&1 | tee proof/vet.log
           GOARCH=386 go test ./common -count=1 2>&1 | tee proof/386.log
