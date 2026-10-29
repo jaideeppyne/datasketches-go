@@ -1,0 +1,59 @@
+name: Verify string SerDe input validation
+on:
+  push:
+    branches: [verify/string-serde-oct29]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.24.x', '1.26.x']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Tests-first baseline on 32-bit integers
+        run: |
+          mkdir -p proof
+          git show 772767453d9b7520d6c3142f037a2d4331f5bae6:common/item_sketch_string.go > common/item_sketch_string.go
+          set +e
+          GOARCH=386 go test ./common -run '^TestStringSerDeRejectsMalformedInput$' -count=1 > proof/baseline.log 2>&1
+          result=$?
+          set -e
+          test "$result" -ne 0
+          grep -q 'TestStringSerDeRejectsMalformedInput' proof/baseline.log
+          grep -q 'panic' proof/baseline.log
+          git show ba4fc715ec15df05e6334fee4b120589b68dd7db:common/item_sketch_string.go > common/item_sketch_string.go
+      - name: Full build, snapshots, race tests, and vet
+        run: |
+          go version | tee proof/runtime.txt
+          go build ./...
+          make download-snapshots
+          go test -race -count=1 ./... 2>&1 | tee proof/tests.log
+          go vet ./... 2>&1 | tee proof/vet.log
+          GOARCH=386 go test ./common -count=1 2>&1 | tee proof/386.log
+      - name: Fuzz string bounds
+        run: go test ./common -run '^$' -fuzz '^FuzzStringSerDeBounds$' -fuzztime 10s -parallel 2 2>&1 | tee proof/fuzz.log
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+      - name: Preserve formatting and source receipt
+        run: |
+          test -z "$(gofmt -l common/item_sketch_string.go common/item_sketch_string_bounds_test.go)"
+          git diff --exit-code
+          git rev-parse HEAD > proof/verification-head.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: string-serde-go-${{ matrix.go }}
+          path: proof
